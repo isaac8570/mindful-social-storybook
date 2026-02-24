@@ -46,9 +46,16 @@ IMAGE_TOOL = {
     },
 }
 
+# Live API model — supports bidiGenerateContent
+LIVE_MODEL = "gemini-2.5-flash-native-audio-latest"
+
 
 class GeminiSession:
-    """Wraps a single Gemini Live API session."""
+    """
+    Wraps a Gemini Live API session.
+    Uses an internal asyncio.Event to keep the session alive while
+    the WebSocket connection is open.
+    """
 
     def __init__(self, client, image_service: ImageService):
         self._client = client
@@ -57,40 +64,65 @@ class GeminiSession:
         self._response_queue: asyncio.Queue = asyncio.Queue()
         self._sequence = 0
         self._reader_task: Optional[asyncio.Task] = None
+        self._session_task: Optional[asyncio.Task] = None
+        self._session_ready = asyncio.Event()
+        self._session_done = asyncio.Event()
 
     async def __aenter__(self):
-        from google import genai
-        from google.genai import types
-
-        self._session = await self._client.aio.live.connect(
-            model="gemini-2.0-flash-live-001",
-            config=types.LiveConnectConfig(
-                system_instruction=SYSTEM_INSTRUCTION,
-                response_modalities=["AUDIO", "TEXT"],
-                speech_config=types.SpeechConfig(
-                    voice_config=types.VoiceConfig(
-                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                            voice_name="Puck"
-                        )
-                    )
-                ),
-                tools=[{"function_declarations": [IMAGE_TOOL]}],
-            ),
-        ).__aenter__()
-
-        # Start background task to read from Gemini and enqueue chunks
-        self._reader_task = asyncio.create_task(self._read_loop())
+        # Run the session in a background task so the `async with connect()`
+        # block stays alive for the duration of the WebSocket connection.
+        self._session_task = asyncio.create_task(self._run_session())
+        # Wait until the session is actually connected
+        await asyncio.wait_for(self._session_ready.wait(), timeout=15.0)
         return self
 
     async def __aexit__(self, *args):
+        # Signal the session task to exit
+        self._session_done.set()
         if self._reader_task:
             self._reader_task.cancel()
             try:
                 await self._reader_task
             except asyncio.CancelledError:
                 pass
-        if self._session:
-            await self._session.__aexit__(*args)
+        if self._session_task:
+            try:
+                await asyncio.wait_for(self._session_task, timeout=5.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                self._session_task.cancel()
+
+    async def _run_session(self):
+        """Holds the `async with connect()` block open until _session_done is set."""
+        from google.genai import types
+
+        try:
+            async with self._client.aio.live.connect(
+                model=LIVE_MODEL,
+                config=types.LiveConnectConfig(
+                    system_instruction=types.Content(
+                        parts=[types.Part(text=SYSTEM_INSTRUCTION)]
+                    ),
+                    response_modalities=["AUDIO"],
+                    speech_config=types.SpeechConfig(
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                voice_name="Puck"
+                            )
+                        )
+                    ),
+                    tools=[{"function_declarations": [IMAGE_TOOL]}],
+                ),
+            ) as session:
+                self._session = session
+                self._reader_task = asyncio.create_task(self._read_loop())
+                self._session_ready.set()
+                # Keep alive until WebSocket closes
+                await self._session_done.wait()
+        except Exception as e:
+            err = StoryChunk(type="error", data=f"Session error: {e}")
+            await self._response_queue.put(err)
+            await self._response_queue.put(None)
+            self._session_ready.set()  # unblock __aenter__ on error
 
     async def send(self, msg: ClientMessage):
         from google.genai import types
@@ -99,49 +131,37 @@ class GeminiSession:
             return
 
         if msg.type == "text" and msg.data:
-            await self._session.send(input=types.LiveClientRealtimeInput(text=msg.data))
+            await self._session.send(input=msg.data, end_of_turn=True)
         elif msg.type == "audio" and msg.data:
             audio_bytes = base64.b64decode(msg.data)
             await self._session.send(
-                input=types.LiveClientRealtimeInput(
-                    audio=types.Blob(data=audio_bytes, mime_type="audio/pcm;rate=16000")
-                )
+                input=types.Blob(data=audio_bytes, mime_type="audio/pcm;rate=16000")
             )
 
     async def interrupt(self):
-        """Signal Gemini to stop current generation."""
         if self._session:
             try:
-                await self._session.send(
-                    input={
-                        "client_content": {
-                            "turn_complete": False,
-                            "interrupted": True,
-                        }
-                    }
-                )
+                await self._session.send(input=".", end_of_turn=False)
             except Exception as e:
                 print(f"[GeminiSession] interrupt error: {e}")
 
     async def _read_loop(self):
-        """Continuously read responses from Gemini and enqueue StoryChunks."""
         try:
             async for response in self._session.receive():
-                # Handle tool calls (image generation)
+                # Tool calls (image generation)
                 if response.tool_call:
                     for fc in response.tool_call.function_calls:
                         if fc.name == "generate_image":
                             scene_desc = fc.args.get("scene_description", "")
                             image_b64 = await self._image_service.generate(scene_desc)
-                            chunk = StoryChunk(
-                                type="image",
-                                data=image_b64,
-                                mime_type="image/png",
-                                sequence=self._next_seq(),
+                            await self._response_queue.put(
+                                StoryChunk(
+                                    type="image",
+                                    data=image_b64,
+                                    mime_type="image/png",
+                                    sequence=self._next_seq(),
+                                )
                             )
-                            await self._response_queue.put(chunk)
-
-                            # Send tool response back to Gemini
                             from google.genai import types
 
                             await self._session.send(
@@ -156,33 +176,31 @@ class GeminiSession:
                                 )
                             )
 
-                # Handle text chunks
                 if response.text:
-                    chunk = StoryChunk(
-                        type="text",
-                        data=response.text,
-                        sequence=self._next_seq(),
+                    await self._response_queue.put(
+                        StoryChunk(
+                            type="text",
+                            data=response.text,
+                            sequence=self._next_seq(),
+                        )
                     )
-                    await self._response_queue.put(chunk)
 
-                # Handle audio chunks
                 if response.data:
-                    audio_b64 = base64.b64encode(response.data).decode()
-                    chunk = StoryChunk(
-                        type="audio",
-                        data=audio_b64,
-                        mime_type="audio/pcm;rate=24000",
-                        sequence=self._next_seq(),
+                    await self._response_queue.put(
+                        StoryChunk(
+                            type="audio",
+                            data=base64.b64encode(response.data).decode(),
+                            mime_type="audio/pcm;rate=24000",
+                            sequence=self._next_seq(),
+                        )
                     )
-                    await self._response_queue.put(chunk)
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            err_chunk = StoryChunk(type="error", data=str(e))
-            await self._response_queue.put(err_chunk)
+            await self._response_queue.put(StoryChunk(type="error", data=str(e)))
         finally:
-            await self._response_queue.put(None)  # sentinel
+            await self._response_queue.put(None)
 
     async def stream_responses(self) -> AsyncGenerator[StoryChunk, None]:
         while True:

@@ -18,11 +18,13 @@
 - **임시 해결:** `cloudbuild.yaml` + GitHub Actions로 CI/CD 자동화
 - **근본 해결:** `curl https://sdk.cloud.google.com | bash` 로 gcloud 설치
 
-### [ENV-003] GEMINI_API_KEY 미설정
-- **현상:** 실제 Gemini API 키 없음 → 실제 Live API 연결 테스트 불가
-- **영향:** E2E 테스트는 mock으로만 가능. 실제 음성/텍스트 스트리밍 미검증.
-- **임시 해결:** mock 기반 테스트로 대체
-- **근본 해결:** https://aistudio.google.com/app/apikey 에서 무료 키 발급 후 `.env` 파일에 설정
+### ~~[ENV-003] Gemini API 키 free_tier quota = 0~~ ✅ RESOLVED
+- **해결:** GCP billing 연결 완료
+- **추가 발견 및 수정:**
+  - `gemini-2.0-flash` / `gemini-2.0-flash-001` → 신규 사용자 deprecated, `gemini-2.5-flash-native-audio-latest` 로 교체
+  - `system_instruction` 타입 → `str` 대신 `types.Content(parts=[types.Part(text=...)])` 로 수정
+  - `connect().__aenter__()` 직접 호출 불가 → background task + `asyncio.Event` 패턴으로 세션 유지 구조 재설계
+- **검증:** 실제 WebSocket E2E 테스트 통과 — 오디오 청크 실시간 스트리밍 확인 (`seq=1~5, 61440 bytes`)
 
 ---
 
@@ -70,3 +72,6 @@
 - requirements.txt 버전 고정 완료 (google-genai==1.9.0)
 - GeminiService에서 GEMINI_API_KEY 없을 때 명확한 에러 메시지 추가
 - GeminiSession의 Optional 타입 힌트 수정 (Python 3.9 호환)
+- Gemini Live API 실제 연결 및 오디오 스트리밍 검증 완료
+- Live 모델 `gemini-2.5-flash-native-audio-latest` 로 업데이트
+- GeminiSession 세션 유지 구조 재설계 (background task + asyncio.Event)
