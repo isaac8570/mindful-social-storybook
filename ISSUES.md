@@ -67,6 +67,20 @@
 
 ---
 
+## 📋 TODO (다음 작업)
+
+### 필수
+1. **Sprout 캐릭터 디자인 개선** — 현재 디자인이 마음에 안 듦. 더 현대적이고 귀여운 디자인 필요
+2. **실제 음성 대화 테스트** — 마이크 버튼 눌러서 Gemini Live API와 실제 대화 테스트
+3. **데모 영상 촬영** — 해커톤 제출용 (<4분)
+
+### 선택
+4. **번들 크기 최적화** — Three.js 코드 스플리팅 (1MB → ~300KB)
+5. **WebSocket 재연결 로직** — 네트워크 끊김 시 자동 재연결
+6. **오디오 포맷 최적화** — WebM → PCM 변환 (음성 인식 품질 향상)
+
+---
+
 ## ✅ Resolved
 
 - requirements.txt 버전 고정 완료 (google-genai==1.9.0)
@@ -75,3 +89,6 @@
 - Gemini Live API 실제 연결 및 오디오 스트리밍 검증 완료
 - Live 모델 `gemini-2.5-flash-native-audio-latest` 로 업데이트
 - GeminiSession 세션 유지 구조 재설계 (background task + asyncio.Event)
+- **GCP Cloud Run 배포 완료** — https://mindful-social-storybook-4rlenzpjoa-uc.a.run.app
+- **R3F v9 업그레이드** — React 19 호환성 문제 해결
+- **언어 선택 기능** — 한국어/English 토글 추가
