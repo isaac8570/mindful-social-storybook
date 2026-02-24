@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useLang } from '../App'
 
 interface AudioControlProps {
   isRecording: boolean
@@ -16,6 +17,7 @@ export default function AudioControl({
   onInterrupt,
 }: AudioControlProps) {
   const [pressed, setPressed] = useState(false)
+  const { t } = useLang()
 
   const handlePointerDown = () => {
     if (!isConnected) return
@@ -59,10 +61,10 @@ export default function AudioControl({
 
       <p className="text-xs text-sprout-brown/60 font-story">
         {!isConnected
-          ? '연결 중...'
+          ? t.connecting
           : isRecording
-          ? '듣고 있어요...'
-          : '누르고 말해줘'}
+          ? t.listening
+          : t.pushToTalk}
       </p>
 
       {/* Interrupt button — only visible while Sprout is speaking */}
@@ -71,7 +73,7 @@ export default function AudioControl({
           onClick={onInterrupt}
           className="text-xs text-sprout-brown/40 underline underline-offset-2 hover:text-sprout-brown/70 transition-colors"
         >
-          이야기 멈추기
+          {t.stopStory}
         </button>
       )}
     </div>

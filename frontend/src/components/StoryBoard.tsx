@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useLang } from '../App'
 
 interface StoryItem {
   id: string
@@ -69,6 +70,7 @@ function FadeInImage({ src }: { src: string }) {
 
 export default function StoryBoard({ items }: StoryBoardProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
+  const { t } = useLang()
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -77,10 +79,8 @@ export default function StoryBoard({ items }: StoryBoardProps) {
   if (items.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full px-6 text-center">
-        <p className="text-sprout-brown/60 font-story text-lg leading-relaxed">
-          안녕! 나는 Sprout야 🌱<br />
-          무엇이 무섭거나 걱정되는지 말해줘.<br />
-          함께 이야기를 만들어볼게!
+        <p className="text-sprout-brown/60 font-story text-lg leading-relaxed whitespace-pre-line">
+          {t.greeting}
         </p>
       </div>
     )

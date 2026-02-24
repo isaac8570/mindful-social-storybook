@@ -1,13 +1,33 @@
-import { useRef, useMemo } from 'react'
-import { Canvas, useFrame, extend } from '@react-three/fiber'
+import { useRef, useMemo, Component, ReactNode } from 'react'
+import { Canvas, useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 
-// Extend R3F with Three.js primitives so JSX types are recognized
-extend(THREE)
+// Error boundary so 3D crash doesn't kill the whole app
+class CanvasErrorBoundary extends Component<
+  { children: ReactNode; fallback: ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: ReactNode; fallback: ReactNode }) {
+    super(props)
+    this.state = { hasError: false }
+  }
+  static getDerivedStateFromError() { return { hasError: true } }
+  render() {
+    return this.state.hasError ? this.props.fallback : this.props.children
+  }
+}
 
-// ─── Procedural Knit Shader ──────────────────────────────────────────────────
+// ─── Design by Gemini ────────────────────────────────────────────────────────
+// Body: Soft bean shape, #A9D18E (main), #E6F5DF (highlight)
+// Eyes: Large ovals, #333333, white sparkles
+// Mouth: Simple upturned curve
+// Blush: #FFD4C2
+// Leaves: 2 rounded leaves, #9CCC65
+// Animations: breathing, blink, sway, leaf wave
 
-const knitVertexShader = `
+// ─── Modern Soft Shader ──────────────────────────────────────────────────────
+
+const softVertexShader = `
   varying vec2 vUv;
   varying vec3 vNormal;
   varying vec3 vPosition;
@@ -19,93 +39,184 @@ const knitVertexShader = `
     vNormal = normalize(normalMatrix * normal);
     vPosition = position;
 
-    // Subtle surface displacement for knit texture
     vec3 pos = position;
-    float noise = sin(pos.x * 12.0 + uTime * 0.5) * cos(pos.y * 12.0 + uTime * 0.3) * 0.012;
-    pos += normal * noise;
-
-    // Breathing scale driven by audio volume
-    pos *= (1.0 + uBreath * 0.12);
+    
+    // Gentle breathing - subtle rise and fall
+    float breath = sin(uTime * 1.2) * 0.02 + uBreath * 0.08;
+    pos.y *= (1.0 + breath);
+    pos.x *= (1.0 - breath * 0.3);
+    pos.z *= (1.0 - breath * 0.3);
 
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
   }
 `
 
-const knitFragmentShader = `
+const softFragmentShader = `
   varying vec2 vUv;
   varying vec3 vNormal;
   varying vec3 vPosition;
   uniform float uTime;
 
-  // Simple hash for procedural noise
-  float hash(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-  }
-
-  float noise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    f = f * f * (3.0 - 2.0 * f);
-    return mix(
-      mix(hash(i), hash(i + vec2(1,0)), f.x),
-      mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), f.x),
-      f.y
-    );
-  }
-
   void main() {
-    // Knit pattern: interlocking loops
-    vec2 uv = vUv * 18.0;
-    vec2 cell = floor(uv);
-    vec2 local = fract(uv);
+    // Gemini's colors: #A9D18E (main), #E6F5DF (highlight)
+    vec3 mainColor = vec3(0.663, 0.820, 0.557);    // #A9D18E
+    vec3 highlightColor = vec3(0.902, 0.961, 0.875); // #E6F5DF
+    vec3 shadowColor = vec3(0.545, 0.718, 0.443);  // darker shade
 
-    // Horizontal yarn strands
-    float yarnH = smoothstep(0.35, 0.5, abs(local.y - 0.5));
-    // Vertical loop bumps
-    float loopX = sin(local.x * 3.14159 * 2.0) * 0.5 + 0.5;
-    float loopY = sin(local.y * 3.14159 * 2.0) * 0.5 + 0.5;
-    float knit = mix(loopX, loopY, 0.5) * (1.0 - yarnH * 0.4);
+    // Soft gradient from bottom to top
+    float gradient = smoothstep(-1.0, 1.2, vPosition.y);
+    vec3 color = mix(mainColor, highlightColor, gradient * 0.4);
 
-    // Warm green base with slight variation
-    vec3 baseColor = vec3(0.48, 0.78, 0.50);       // soft green
-    vec3 yarnColor = vec3(0.55, 0.85, 0.57);        // lighter yarn highlight
-    vec3 shadowColor = vec3(0.38, 0.65, 0.42);      // shadow in loops
+    // Soft rim lighting (modern 3D look)
+    vec3 viewDir = vec3(0.0, 0.0, 1.0);
+    float rim = 1.0 - max(dot(vNormal, viewDir), 0.0);
+    rim = pow(rim, 3.0);
+    color = mix(color, highlightColor, rim * 0.5);
 
-    vec3 color = mix(shadowColor, mix(baseColor, yarnColor, knit), knit);
+    // Subtle top light
+    float topLight = max(dot(vNormal, normalize(vec3(0.0, 1.0, 0.5))), 0.0);
+    color = mix(color, highlightColor, topLight * 0.3);
 
-    // Add subtle fuzz/noise for wool texture
-    float fuzz = noise(vUv * 80.0 + uTime * 0.1) * 0.06;
-    color += fuzz;
+    // Soft shadow at bottom
+    float bottomShadow = smoothstep(0.0, -0.8, vPosition.y);
+    color = mix(color, shadowColor, bottomShadow * 0.3);
 
-    // Rim lighting for warmth
-    float rim = 1.0 - max(dot(vNormal, vec3(0.0, 0.0, 1.0)), 0.0);
-    rim = pow(rim, 2.5);
-    color += rim * vec3(0.3, 0.15, 0.05) * 0.4;
-
-    // Diffuse lighting
-    vec3 lightDir = normalize(vec3(1.0, 1.5, 2.0));
-    float diff = max(dot(vNormal, lightDir), 0.0);
-    color *= (0.5 + diff * 0.6);
+    // Very subtle ambient occlusion feel
+    float ao = smoothstep(-0.5, 0.5, vPosition.y) * 0.15 + 0.85;
+    color *= ao;
 
     gl_FragColor = vec4(color, 1.0);
   }
 `
 
-// ─── Leaf decoration ─────────────────────────────────────────────────────────
+// ─── Modern Rounded Leaf ─────────────────────────────────────────────────────
 
-function Leaf({ position, rotation }: { position: [number, number, number]; rotation: [number, number, number] }) {
+function ModernLeaf({ 
+  position, 
+  rotation, 
+  scale = 1,
+  delay = 0 
+}: { 
+  position: [number, number, number]
+  rotation: [number, number, number]
+  scale?: number
+  delay?: number
+}) {
+  const meshRef = useRef<THREE.Group>(null)
+  
+  useFrame(({ clock }) => {
+    if (meshRef.current) {
+      const t = clock.getElapsedTime() + delay
+      // Gentle sway like a plant in breeze
+      meshRef.current.rotation.z = rotation[2] + Math.sin(t * 0.8) * 0.1
+      meshRef.current.rotation.x = rotation[0] + Math.cos(t * 0.6) * 0.05
+    }
+  })
+
   return (
-    <mesh position={position} rotation={rotation}>
-      <sphereGeometry args={[0.12, 8, 6]} />
-      <meshStandardMaterial color="#5aad5e" roughness={0.8} />
+    <group ref={meshRef} position={position} rotation={rotation} scale={scale}>
+      {/* Leaf shape - rounded ellipsoid */}
+      <mesh>
+        <sphereGeometry args={[0.18, 16, 12]} />
+        <meshStandardMaterial 
+          color="#9CCC65"  // Gemini's leaf color
+          roughness={0.7}
+          metalness={0.0}
+        />
+      </mesh>
+      {/* Leaf stem */}
+      <mesh position={[0, -0.15, 0]} rotation={[0, 0, 0]}>
+        <cylinderGeometry args={[0.02, 0.03, 0.12, 8]} />
+        <meshStandardMaterial color="#7CB342" roughness={0.8} />
+      </mesh>
+    </group>
+  )
+}
+
+// ─── Modern Eye with Blink ───────────────────────────────────────────────────
+
+function ModernEye({ position, blinkOffset = 0 }: { position: [number, number, number]; blinkOffset?: number }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const blinkRef = useRef(1) // 1 = open, 0 = closed
+  
+  useFrame(({ clock }) => {
+    const t = clock.getElapsedTime() + blinkOffset
+    
+    // Slow, contented blink every ~4 seconds
+    const blinkCycle = t % 4
+    if (blinkCycle < 0.15) {
+      blinkRef.current = Math.cos(blinkCycle / 0.15 * Math.PI) * 0.5 + 0.5
+    } else {
+      blinkRef.current = 1
+    }
+    
+    if (groupRef.current) {
+      groupRef.current.scale.y = 0.3 + blinkRef.current * 0.7
+    }
+  })
+
+  return (
+    <group ref={groupRef} position={position}>
+      {/* Eye - large oval */}
+      <mesh scale={[1, 1.3, 0.8]}>
+        <sphereGeometry args={[0.09, 16, 16]} />
+        <meshBasicMaterial color="#333333" />  {/* Gemini's eye color */}
+      </mesh>
+      {/* Main sparkle */}
+      <mesh position={[0.025, 0.04, 0.06]}>
+        <sphereGeometry args={[0.025, 8, 8]} />
+        <meshBasicMaterial color="#ffffff" />
+      </mesh>
+      {/* Small sparkle */}
+      <mesh position={[-0.015, -0.01, 0.055]}>
+        <sphereGeometry args={[0.012, 8, 8]} />
+        <meshBasicMaterial color="#ffffff" transparent opacity={0.8} />
+      </mesh>
+    </group>
+  )
+}
+
+// ─── Soft Blush ──────────────────────────────────────────────────────────────
+
+function Blush({ position }: { position: [number, number, number] }) {
+  return (
+    <mesh position={position} rotation={[0, 0, 0]}>
+      <circleGeometry args={[0.08, 16]} />
+      <meshBasicMaterial 
+        color="#FFD4C2"  // Gemini's blush color
+        transparent 
+        opacity={0.4} 
+      />
     </mesh>
   )
 }
 
-// ─── Sprout Body ─────────────────────────────────────────────────────────────
+// ─── Simple Smile ────────────────────────────────────────────────────────────
+
+function SimpleSmile({ volume }: { volume: number }) {
+  const meshRef = useRef<THREE.Mesh>(null)
+  
+  useFrame(() => {
+    if (meshRef.current) {
+      // Smile widens slightly when speaking
+      const scale = 1 + volume * 0.2
+      meshRef.current.scale.set(scale, 1, 1)
+    }
+  })
+
+  return (
+    <mesh ref={meshRef} position={[0, -0.12, 0.72]} rotation={[0.1, 0, Math.PI]}>
+      <torusGeometry args={[0.08, 0.018, 8, 16, Math.PI * 0.8]} />
+      <meshBasicMaterial color="#5D4037" />
+    </mesh>
+  )
+}
+
+// ─── Sprout Body (Bean Shape) ────────────────────────────────────────────────
 
 function SproutBody({ volume }: { volume: number }) {
-  const meshRef = useRef<THREE.Mesh>(null)
+  const groupRef = useRef<THREE.Group>(null)
+  
   const uniforms = useMemo(
     () => ({
       uTime: { value: 0 },
@@ -115,62 +226,59 @@ function SproutBody({ volume }: { volume: number }) {
   )
 
   useFrame(({ clock }) => {
-    uniforms.uTime.value = clock.getElapsedTime()
-    // Smooth breath: lerp toward target volume
+    const t = clock.getElapsedTime()
+    uniforms.uTime.value = t
+    
+    // Smooth breath
     uniforms.uBreath.value = THREE.MathUtils.lerp(
       uniforms.uBreath.value,
       volume,
-      0.08
+      0.1
     )
-    // Gentle idle sway
-    if (meshRef.current) {
-      meshRef.current.rotation.y = Math.sin(clock.getElapsedTime() * 0.4) * 0.08
-      meshRef.current.position.y = Math.sin(clock.getElapsedTime() * 0.6) * 0.04
+    
+    // Gentle sway (like a plant in light breeze)
+    if (groupRef.current) {
+      groupRef.current.rotation.z = Math.sin(t * 0.5) * 0.03
+      groupRef.current.position.y = Math.sin(t * 0.8) * 0.02
     }
   })
 
   return (
-    <group>
-      {/* Main body */}
-      <mesh ref={meshRef}>
-        <sphereGeometry args={[1, 64, 64]} />
+    <group ref={groupRef}>
+      {/* Main body - soft bean shape (bottom-heavy) */}
+      <mesh scale={[0.85, 1, 0.8]}>
+        <sphereGeometry args={[0.8, 64, 64]} />
         <shaderMaterial
-          vertexShader={knitVertexShader}
-          fragmentShader={knitFragmentShader}
+          vertexShader={softVertexShader}
+          fragmentShader={softFragmentShader}
           uniforms={uniforms}
         />
       </mesh>
 
-      {/* Eyes */}
-      <mesh position={[-0.28, 0.18, 0.92]}>
-        <sphereGeometry args={[0.08, 12, 12]} />
-        <meshStandardMaterial color="#2d1a0e" />
-      </mesh>
-      <mesh position={[0.28, 0.18, 0.92]}>
-        <sphereGeometry args={[0.08, 12, 12]} />
-        <meshStandardMaterial color="#2d1a0e" />
-      </mesh>
+      {/* Eyes - large, widely spaced */}
+      <ModernEye position={[-0.22, 0.1, 0.62]} blinkOffset={0} />
+      <ModernEye position={[0.22, 0.1, 0.62]} blinkOffset={0.5} />
 
-      {/* Eye shine */}
-      <mesh position={[-0.25, 0.22, 0.98]}>
-        <sphereGeometry args={[0.025, 8, 8]} />
-        <meshStandardMaterial color="white" />
-      </mesh>
-      <mesh position={[0.31, 0.22, 0.98]}>
-        <sphereGeometry args={[0.025, 8, 8]} />
-        <meshStandardMaterial color="white" />
-      </mesh>
+      {/* Blush - soft peach */}
+      <Blush position={[-0.35, -0.05, 0.65]} />
+      <Blush position={[0.35, -0.05, 0.65]} />
 
-      {/* Smile */}
-      <mesh position={[0, -0.05, 0.96]} rotation={[0, 0, 0]}>
-        <torusGeometry args={[0.18, 0.025, 8, 16, Math.PI]} />
-        <meshStandardMaterial color="#2d1a0e" />
-      </mesh>
+      {/* Simple smile */}
+      <SimpleSmile volume={volume} />
 
-      {/* Leaves on top */}
-      <Leaf position={[0, 1.1, 0.1]} rotation={[0.3, 0, -0.3]} />
-      <Leaf position={[0.2, 1.05, 0.05]} rotation={[0.2, 0.3, 0.4]} />
-      <Leaf position={[-0.2, 1.08, 0.0]} rotation={[0.2, -0.3, -0.4]} />
+      {/* Two rounded leaves - slightly angled */}
+      <ModernLeaf 
+        position={[-0.12, 0.85, 0]} 
+        rotation={[0.2, 0, -0.3]} 
+        scale={1.1} 
+        delay={0} 
+      />
+      <ModernLeaf 
+        position={[0.12, 0.85, 0]} 
+        rotation={[0.2, 0, 0.3]} 
+        scale={1.1} 
+        delay={0.8} 
+      />
     </group>
   )
 }
@@ -180,9 +288,12 @@ function SproutBody({ volume }: { volume: number }) {
 function Scene({ volume }: { volume: number }) {
   return (
     <>
-      <ambientLight intensity={0.6} color="#fff5e6" />
-      <directionalLight position={[3, 5, 5]} intensity={0.8} color="#ffe8cc" />
-      <pointLight position={[-3, 2, 2]} intensity={0.3} color="#c8f0c8" />
+      {/* Soft, warm lighting */}
+      <ambientLight intensity={0.7} color="#fffaf5" />
+      <directionalLight position={[2, 4, 5]} intensity={0.5} color="#fff8f0" />
+      <directionalLight position={[-2, 2, 3]} intensity={0.3} color="#f0fff0" />
+      {/* Subtle rim light */}
+      <pointLight position={[0, 1, -2]} intensity={0.2} color="#e8f5e9" />
       <SproutBody volume={volume} />
     </>
   )
@@ -196,12 +307,26 @@ interface SproutAgentProps {
 
 export default function SproutAgent({ volume }: SproutAgentProps) {
   return (
-    <Canvas
-      camera={{ position: [0, 0, 3.2], fov: 45 }}
-      style={{ background: 'transparent' }}
-      gl={{ antialias: true, alpha: true }}
+    <CanvasErrorBoundary
+      fallback={
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          height: '100%', fontSize: 80
+        }}>
+          🌱
+        </div>
+      }
     >
-      <Scene volume={volume} />
-    </Canvas>
+      <Canvas
+        camera={{ position: [0, 0.2, 2.8], fov: 35 }}
+        style={{ background: 'transparent' }}
+        gl={{ antialias: true, alpha: true }}
+        onCreated={({ gl }) => {
+          gl.setClearColor(0x000000, 0)
+        }}
+      >
+        <Scene volume={volume} />
+      </Canvas>
+    </CanvasErrorBoundary>
   )
 }
