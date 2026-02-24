@@ -1,9 +1,8 @@
 import os
-import json
 import asyncio
 import base64
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 from models.message import ClientMessage, StoryChunk
 from services.image_service import ImageService
@@ -55,8 +54,9 @@ class GeminiSession:
         self._client = client
         self._image_service = image_service
         self._session = None
-        self._response_queue: asyncio.Queue[StoryChunk | None] = asyncio.Queue()
+        self._response_queue: asyncio.Queue = asyncio.Queue()
         self._sequence = 0
+        self._reader_task: Optional[asyncio.Task] = None
 
     async def __aenter__(self):
         from google import genai
@@ -83,20 +83,24 @@ class GeminiSession:
         return self
 
     async def __aexit__(self, *args):
-        self._reader_task.cancel()
-        try:
-            await self._reader_task
-        except asyncio.CancelledError:
-            pass
+        if self._reader_task:
+            self._reader_task.cancel()
+            try:
+                await self._reader_task
+            except asyncio.CancelledError:
+                pass
         if self._session:
             await self._session.__aexit__(*args)
 
     async def send(self, msg: ClientMessage):
         from google.genai import types
 
-        if msg.type == "text":
+        if not self._session:
+            return
+
+        if msg.type == "text" and msg.data:
             await self._session.send(input=types.LiveClientRealtimeInput(text=msg.data))
-        elif msg.type == "audio":
+        elif msg.type == "audio" and msg.data:
             audio_bytes = base64.b64decode(msg.data)
             await self._session.send(
                 input=types.LiveClientRealtimeInput(
@@ -107,9 +111,17 @@ class GeminiSession:
     async def interrupt(self):
         """Signal Gemini to stop current generation."""
         if self._session:
-            await self._session.send(
-                input={"client_content": {"turn_complete": False, "interrupted": True}}
-            )
+            try:
+                await self._session.send(
+                    input={
+                        "client_content": {
+                            "turn_complete": False,
+                            "interrupted": True,
+                        }
+                    }
+                )
+            except Exception as e:
+                print(f"[GeminiSession] interrupt error: {e}")
 
     async def _read_loop(self):
         """Continuously read responses from Gemini and enqueue StoryChunks."""
@@ -189,6 +201,11 @@ class GeminiService:
         from google import genai
 
         api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "GEMINI_API_KEY environment variable is not set. "
+                "Get your free API key at https://aistudio.google.com/app/apikey"
+            )
         self._client = genai.Client(api_key=api_key)
         self._image_service = ImageService()
 

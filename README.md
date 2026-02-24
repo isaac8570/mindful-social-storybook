@@ -118,19 +118,78 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 
 ---
 
+## Testing
+
+Tests run inside Docker (Python 3.11) — no local Python setup needed:
+
+```bash
+# Build test image
+docker build -f backend/Dockerfile.test -t mindful-storybook-test ./backend
+
+# Run all 26 tests
+docker run --rm \
+  -e GEMINI_API_KEY=test-key \
+  -e GCP_PROJECT_ID= \
+  mindful-storybook-test
+```
+
+| Suite | Tests | Status |
+|---|---|---|
+| `test_models.py` | 9 | ✅ |
+| `test_health.py` | 2 | ✅ |
+| `test_image_service.py` | 4 | ✅ |
+| `test_gemini_service.py` | 6 | ✅ |
+| `test_websocket_e2e.py` | 5 | ✅ |
+| **Total** | **26** | **26/26 passed** |
+
+---
+
 ## GCP Cloud Run Deployment
+
+### Option A — One-command script
+
+```bash
+export GCP_PROJECT_ID=your-project-id
+export GEMINI_API_KEY=your-gemini-key
+./deploy.sh
+```
+
+The script enables required APIs, stores the key in Secret Manager, builds & pushes the Docker image, and deploys to Cloud Run.
+
+### Option B — Cloud Build
+
+```bash
+gcloud builds submit --config cloudbuild.yaml --project your-project-id
+```
+
+### Option C — GitHub Actions (CI/CD)
+
+Add these GitHub Secrets to your fork:
+- `GCP_PROJECT_ID` — your GCP project ID
+- `GCP_SA_KEY` — service account JSON key
+
+Then push to `master` → tests run → auto-deploys to Cloud Run.
+
+### Option D — Manual gcloud
 
 ```bash
 # Build and push Docker image
-gcloud builds submit --tag gcr.io/YOUR_PROJECT/sprout-storybook
+docker build --build-arg VITE_WS_URL=/ws/story \
+  -t gcr.io/YOUR_PROJECT/mindful-social-storybook .
+docker push gcr.io/YOUR_PROJECT/mindful-social-storybook
+
+# Store API key in Secret Manager
+echo -n "your_key" | gcloud secrets create gemini-api-key --data-file=-
 
 # Deploy to Cloud Run
-gcloud run deploy sprout-storybook \
-  --image gcr.io/YOUR_PROJECT/sprout-storybook \
+gcloud run deploy mindful-social-storybook \
+  --image gcr.io/YOUR_PROJECT/mindful-social-storybook \
   --platform managed \
   --region us-central1 \
   --allow-unauthenticated \
-  --set-env-vars GEMINI_API_KEY=your_key,GCP_PROJECT_ID=your_project \
+  --memory 1Gi \
+  --update-secrets GEMINI_API_KEY=gemini-api-key:latest \
+  --set-env-vars GCP_PROJECT_ID=YOUR_PROJECT \
   --port 8080
 ```
 
@@ -150,7 +209,14 @@ mindful-social-storybook/
 │   │   └── image_service.py    # Vertex AI Imagen integration
 │   ├── models/
 │   │   └── message.py          # Pydantic schemas
+│   ├── tests/                  # pytest suite (26 tests)
+│   ├── Dockerfile.test         # Test-only Docker image
+│   ├── pytest.ini
 │   └── requirements.txt
+├── .github/
+│   └── workflows/
+│       ├── ci.yml              # Test + build on every push/PR
+│       └── deploy.yml          # Auto-deploy to Cloud Run on master
 ├── frontend/
 │   ├── src/
 │   │   ├── App.tsx             # Main app + state orchestration
@@ -162,7 +228,10 @@ mindful-social-storybook/
 │   │       ├── useWebSocket.ts # WS connection management
 │   │       └── useAudio.ts     # Recording + playback queue
 │   └── package.json
-├── Dockerfile                  # Multi-stage build
+├── Dockerfile                  # Multi-stage build (Node 20 + Python 3.11)
+├── cloudbuild.yaml             # GCP Cloud Build pipeline
+├── deploy.sh                   # One-command manual deployment
+├── ISSUES.md                   # Known issues tracker
 ├── plan.md                     # Project planning document
 └── README.md
 ```

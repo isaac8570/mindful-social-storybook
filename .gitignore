@@ -37,3 +37,4 @@ Thumbs.db
 # Markdown (exclude personal planning docs, keep README)
 *.md
 !README.md
+!ISSUES.md
