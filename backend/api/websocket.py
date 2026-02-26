@@ -34,7 +34,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
                     if msg.type == "interrupt":
                         await session.interrupt()
-                    elif msg.type in ("audio", "text"):
+                    elif msg.type == "audio":
+                        await session.send(msg)
+                    elif msg.type == "text":
                         await session.send(msg)
 
             except WebSocketDisconnect:

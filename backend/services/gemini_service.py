@@ -131,6 +131,7 @@ class GeminiSession:
             return
 
         if msg.type == "text" and msg.data:
+            await self._status("🌱 생각하는 중...")
             await self._session.send(input=msg.data, end_of_turn=True)
         elif msg.type == "audio" and msg.data:
             audio_bytes = base64.b64decode(msg.data)
@@ -145,7 +146,12 @@ class GeminiSession:
             except Exception as e:
                 print(f"[GeminiSession] interrupt error: {e}")
 
+    async def _status(self, msg: str):
+        """Helper to push a status chunk to the queue."""
+        await self._response_queue.put(StoryChunk(type="status", data=msg))
+
     async def _read_loop(self):
+        first_audio = True
         try:
             async for response in self._session.receive():
                 # Tool calls (image generation)
@@ -153,15 +159,20 @@ class GeminiSession:
                     for fc in response.tool_call.function_calls:
                         if fc.name == "generate_image":
                             scene_desc = fc.args.get("scene_description", "")
+                            await self._status("🎨 그림 그리는 중...")
                             image_b64 = await self._image_service.generate(scene_desc)
-                            await self._response_queue.put(
-                                StoryChunk(
-                                    type="image",
-                                    data=image_b64,
-                                    mime_type="image/png",
-                                    sequence=self._next_seq(),
+                            if image_b64:
+                                await self._response_queue.put(
+                                    StoryChunk(
+                                        type="image",
+                                        data=image_b64,
+                                        mime_type="image/png",
+                                        sequence=self._next_seq(),
+                                    )
                                 )
-                            )
+                                await self._status("🌱 이야기 계속 중...")
+                            else:
+                                await self._status("🌱 이야기 계속 중...")
                             from google.genai import types
 
                             await self._session.send(
@@ -186,6 +197,9 @@ class GeminiSession:
                     )
 
                 if response.data:
+                    if first_audio:
+                        await self._status("🌱 말하는 중...")
+                        first_audio = False
                     await self._response_queue.put(
                         StoryChunk(
                             type="audio",

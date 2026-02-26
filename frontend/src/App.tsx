@@ -56,6 +56,7 @@ export default function App() {
   const [lang, setLang] = useState<Lang>('ko')
   const [isSproutSpeaking, setIsSproutSpeaking] = useState(false)
   const [isWaitingForSprout, setIsWaitingForSprout] = useState(false)
+  const [statusMsg, setStatusMsg] = useState<string>('')
   const audioQueueRef = useRef(new AudioPlaybackQueue())
   
   const t = translations[lang]
@@ -66,7 +67,10 @@ export default function App() {
       setVolume(v)
       const speaking = v > 0.05
       setIsSproutSpeaking(speaking)
-      if (speaking) setIsWaitingForSprout(false) // got response, stop waiting
+      if (speaking) {
+        setIsWaitingForSprout(false)
+        setStatusMsg('')
+      }
     }
   }, [])
 
@@ -104,7 +108,14 @@ export default function App() {
         }
         break
 
+      case 'status':
+        setStatusMsg(chunk.data || '')
+        // Clear status after 8 seconds if no new status
+        setTimeout(() => setStatusMsg(s => s === chunk.data ? '' : s), 8000)
+        break
+
       case 'error':
+        setStatusMsg(`⚠️ ${chunk.data || '오류가 발생했어요'}`)
         console.error('[Story] Error from server:', chunk.data)
         break
     }
@@ -201,6 +212,13 @@ export default function App() {
 
         {/* ── Divider ── */}
         <div className="mx-5 border-t border-sprout-warm" />
+
+        {/* ── Status banner ── */}
+        {statusMsg && (
+          <div className="mx-5 mt-2 px-4 py-2 bg-sprout-warm/60 rounded-2xl flex items-center gap-2 animate-pulse">
+            <span className="text-sm text-sprout-brown font-story">{statusMsg}</span>
+          </div>
+        )}
 
         {/* ── Story area (flex-grow) ── */}
         <div className="flex-1 overflow-hidden">
