@@ -1,80 +1,56 @@
 import os
-import base64
 import httpx
-
-# Placeholder image (1x1 warm beige PNG) used when Vertex AI is not configured
-_PLACEHOLDER_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwADhQGAWjR9awAAAABJRU5ErkJggg=="
 
 
 class ImageService:
     """
-    Generates story illustrations via Vertex AI Imagen 3.
-    Falls back to a placeholder when credentials are not available.
+    Generates story illustrations via gemini-2.0-flash-exp-image-generation.
+    Uses the same GEMINI_API_KEY — no extra auth needed.
     """
 
     def __init__(self):
-        self._project = os.environ.get("GCP_PROJECT_ID", "")
-        self._location = os.environ.get("GCP_LOCATION", "us-central1")
-        self._use_vertex = bool(self._project)
+        self._api_key = os.environ.get("GEMINI_API_KEY", "")
 
     async def generate(self, scene_description: str) -> str:
-        """
-        Returns a base64-encoded PNG image for the given scene description.
-        """
-        if not self._use_vertex:
-            print(
-                f"[ImageService] No GCP project set — returning placeholder for: {scene_description[:60]}"
-            )
-            return _PLACEHOLDER_B64
-
+        """Returns a base64-encoded PNG, or empty string on failure."""
+        if not self._api_key:
+            print("[ImageService] No GEMINI_API_KEY — skipping image")
+            return ""
         try:
-            return await self._generate_via_vertex(scene_description)
+            return await self._generate(scene_description)
         except Exception as e:
-            print(f"[ImageService] Vertex AI error: {e} — returning placeholder")
-            return _PLACEHOLDER_B64
+            print(f"[ImageService] Image generation failed: {e}")
+            return ""
 
-    async def _generate_via_vertex(self, scene_description: str) -> str:
-        """Call Vertex AI Imagen 3 REST API and return base64 PNG."""
-        import google.auth
-        import google.auth.transport.requests
-
-        credentials, _ = google.auth.default(
-            scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
-        auth_req = google.auth.transport.requests.Request()
-        credentials.refresh(auth_req)
-        token = credentials.token
-
-        endpoint = (
-            f"https://{self._location}-aiplatform.googleapis.com/v1/"
-            f"projects/{self._project}/locations/{self._location}/"
-            f"publishers/google/models/imagen-3.0-generate-001:predict"
-        )
-
+    async def _generate(self, scene_description: str) -> str:
         prompt = (
             f"{scene_description}. "
             "Style: soft watercolor illustration, warm pastel colors, "
-            "cozy knitted texture, child-friendly fairy tale art, "
-            "gentle and comforting atmosphere."
+            "child-friendly fairy tale art, gentle and comforting atmosphere. "
+            "No text, no words in the image."
+        )
+
+        url = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"gemini-2.0-flash-exp-image-generation:generateContent"
+            f"?key={self._api_key}"
         )
 
         payload = {
-            "instances": [{"prompt": prompt}],
-            "parameters": {
-                "sampleCount": 1,
-                "aspectRatio": "1:1",
-                "safetyFilterLevel": "block_some",
-                "personGeneration": "allow_adult",
-            },
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]},
         }
 
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                endpoint,
-                json=payload,
-                headers={"Authorization": f"Bearer {token}"},
-            )
+            resp = await client.post(url, json=payload)
             resp.raise_for_status()
-            result = resp.json()
-            b64_image = result["predictions"][0]["bytesBase64Encoded"]
-            return b64_image
+            parts = (
+                resp.json()
+                .get("candidates", [{}])[0]
+                .get("content", {})
+                .get("parts", [])
+            )
+            for part in parts:
+                if "inlineData" in part:
+                    return part["inlineData"]["data"]  # base64 PNG
+            raise ValueError("No image in response")

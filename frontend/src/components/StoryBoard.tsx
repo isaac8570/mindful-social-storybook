@@ -91,9 +91,9 @@ export default function StoryBoard({ items }: StoryBoardProps) {
       {items.map((item) =>
         item.type === 'text' ? (
           <TypewriterText key={item.id} text={item.content} />
-        ) : (
+        ) : item.content ? (
           <FadeInImage key={item.id} src={item.content} />
-        )
+        ) : null
       )}
       <div ref={bottomRef} />
     </div>
