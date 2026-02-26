@@ -54,13 +54,20 @@ export default function App() {
   const [storyItems, setStoryItems] = useState<StoryItem[]>([])
   const [volume, setVolume] = useState(0)
   const [lang, setLang] = useState<Lang>('ko')
+  const [isSproutSpeaking, setIsSproutSpeaking] = useState(false)
+  const [isWaitingForSprout, setIsWaitingForSprout] = useState(false)
   const audioQueueRef = useRef(new AudioPlaybackQueue())
   
   const t = translations[lang]
 
-  // Wire playback volume → Sprout breathing
+  // Wire playback volume → Sprout breathing + speaking state
   useEffect(() => {
-    audioQueueRef.current.onPlaybackVolume = setVolume
+    audioQueueRef.current.onPlaybackVolume = (v) => {
+      setVolume(v)
+      const speaking = v > 0.05
+      setIsSproutSpeaking(speaking)
+      if (speaking) setIsWaitingForSprout(false) // got response, stop waiting
+    }
   }, [])
 
   // ── Handle incoming WebSocket chunks ──────────────────────────────────────
@@ -120,26 +127,31 @@ export default function App() {
   })
 
   const handlePressStart = useCallback(() => {
+    // Unlock AudioContext on first user gesture (browser autoplay policy)
+    audioQueueRef.current.unlock()
     // Interrupt Sprout if currently speaking
     audioQueueRef.current.clear()
     sendInterrupt()
+    setIsWaitingForSprout(false)
     startRecording()
   }, [sendInterrupt, startRecording])
 
   const handlePressEnd = useCallback(() => {
     stopRecording()
+    setIsWaitingForSprout(true) // show "Sprout is thinking..."
   }, [stopRecording])
 
   const handleInterrupt = useCallback(() => {
     audioQueueRef.current.clear()
     sendInterrupt()
+    setIsWaitingForSprout(false)
   }, [sendInterrupt])
 
   const isConnected = status === 'connected'
 
   return (
     <LangContext.Provider value={{ lang, t, setLang }}>
-      <div className="flex flex-col h-screen w-screen bg-sprout-cream overflow-hidden">
+      <div className="flex flex-col h-full w-full bg-sprout-cream overflow-hidden">
         {/* ── Header ── */}
         <div className="flex items-center justify-between px-5 pt-4 pb-1">
           <h1 className="font-story text-sprout-brown text-lg font-semibold tracking-wide">
@@ -182,8 +194,8 @@ export default function App() {
           </div>
         </div>
 
-        {/* ── 3D Character (top 45%) ── */}
-        <div className="flex-none" style={{ height: '45vh' }}>
+        {/* ── 3D Character (top portion) ── */}
+        <div className="flex-none h-[35vh] min-h-[200px] max-h-[350px]">
           <SproutAgent volume={volume} />
         </div>
 
@@ -200,6 +212,8 @@ export default function App() {
           <AudioControl
             isRecording={isRecording}
             isConnected={isConnected}
+            isSproutSpeaking={isSproutSpeaking}
+            isWaiting={isWaitingForSprout}
             onPressStart={handlePressStart}
             onPressEnd={handlePressEnd}
             onInterrupt={handleInterrupt}
