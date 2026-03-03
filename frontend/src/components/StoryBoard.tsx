@@ -57,7 +57,7 @@ function FadeInImage({ src }: { src: string }) {
       style={{ opacity: visible ? 1 : 0, transform: visible ? 'scale(1)' : 'scale(0.96)' }}
     >
       <img
-        src={`data:image/png;base64,${src}`}
+        src={`data:image/jpeg;base64,${src}`}
         alt="Story illustration"
         className="w-full object-cover rounded-2xl"
         style={{ maxHeight: '220px' }}

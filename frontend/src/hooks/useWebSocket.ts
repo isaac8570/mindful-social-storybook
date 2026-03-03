@@ -16,21 +16,38 @@ interface UseWebSocketOptions {
   onChunk: (chunk: StoryChunk) => void
 }
 
+const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000] // ms, capped at last value
+
 export function useWebSocket({ url, onChunk }: UseWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null)
   const [status, setStatus] = useState<WSStatus>('disconnected')
   const onChunkRef = useRef(onChunk)
   onChunkRef.current = onChunk
+  const reconnectAttemptRef = useRef(0)
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const unmountedRef = useRef(false)
+
+  const clearReconnectTimer = () => {
+    if (reconnectTimerRef.current !== null) {
+      clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
+  }
 
   const connect = useCallback(() => {
+    if (unmountedRef.current) return
     if (wsRef.current?.readyState === WebSocket.OPEN) return
+    if (wsRef.current?.readyState === WebSocket.CONNECTING) return
 
+    clearReconnectTimer()
     setStatus('connecting')
     const ws = new WebSocket(url)
     wsRef.current = ws
 
     ws.onopen = () => {
+      if (unmountedRef.current) { ws.close(); return }
       console.log('[WS] Connected')
+      reconnectAttemptRef.current = 0
       setStatus('connected')
     }
 
@@ -48,14 +65,27 @@ export function useWebSocket({ url, onChunk }: UseWebSocketOptions) {
       setStatus('error')
     }
 
-    ws.onclose = () => {
-      console.log('[WS] Disconnected')
+    ws.onclose = (event) => {
+      console.log(`[WS] Disconnected (code=${event.code})`)
       setStatus('disconnected')
+      if (unmountedRef.current) return
+      // Auto-reconnect unless closed cleanly by us (code 1000)
+      if (event.code !== 1000) {
+        const attempt = reconnectAttemptRef.current
+        const delay = RECONNECT_DELAYS[Math.min(attempt, RECONNECT_DELAYS.length - 1)]
+        console.log(`[WS] Reconnecting in ${delay}ms (attempt ${attempt + 1})`)
+        reconnectAttemptRef.current++
+        reconnectTimerRef.current = setTimeout(() => {
+          if (!unmountedRef.current) connect()
+        }, delay)
+      }
     }
-  }, [url])
+  }, [url]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const disconnect = useCallback(() => {
-    wsRef.current?.close()
+    clearReconnectTimer()
+    reconnectAttemptRef.current = 0
+    wsRef.current?.close(1000, 'user disconnect')
     wsRef.current = null
   }, [])
 
@@ -79,8 +109,11 @@ export function useWebSocket({ url, onChunk }: UseWebSocketOptions) {
   }, [])
 
   useEffect(() => {
+    unmountedRef.current = false
     return () => {
-      wsRef.current?.close()
+      unmountedRef.current = true
+      clearReconnectTimer()
+      wsRef.current?.close(1000, 'unmount')
     }
   }, [])
 

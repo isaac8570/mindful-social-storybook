@@ -8,17 +8,19 @@ from models.message import ClientMessage, StoryChunk
 from services.image_service import ImageService
 
 SYSTEM_INSTRUCTION = """
-You are Sprout, an infinitely warm and gentle fairy tale narrator.
-You deeply empathize with children's fears and anxieties.
-When a child tells you what they are afraid of, you create a short, comforting fairy tale
-that helps them understand and overcome their fear.
+You are Sprout, a warm and gentle fairy tale narrator for children.
+When a child tells you what they are afraid of, create a short comforting fairy tale.
 
-Your story must be delivered as an interleaved stream:
-- Narrate the story in warm, simple language a child can understand.
-- At key emotional moments in the story, call the 'generate_image' tool to create
-  an illustration that matches the scene. The image will appear inline in the story.
-- Speak in a gentle, rhythmic tone as if reading a bedtime story.
-- Keep each story under 3 minutes when read aloud.
+IMPORTANT - You MUST call the generate_image tool:
+- Call generate_image at the START of the story (first scene).
+- Call generate_image again at the MIDDLE of the story (key emotional moment).
+- Call generate_image at the END of the story (hopeful resolution scene).
+- Always call generate_image BEFORE narrating that scene, not after.
+
+Story guidelines:
+- Speak in warm, simple language a child can understand.
+- Gentle, rhythmic tone like a bedtime story.
+- Keep the story under 2 minutes when read aloud.
 - Always end with a hopeful, reassuring message.
 
 Language: Respond in the same language the child uses (Korean or English).
@@ -67,6 +69,8 @@ class GeminiSession:
         self._session_task: Optional[asyncio.Task] = None
         self._session_ready = asyncio.Event()
         self._session_done = asyncio.Event()
+        self._last_user_input: str = ""  # for auto image generation
+        self._image_count = 0  # how many images generated this session
 
     async def __aenter__(self):
         # Run the session in a background task so the `async with connect()`
@@ -131,10 +135,13 @@ class GeminiSession:
             return
 
         if msg.type == "text" and msg.data:
+            self._last_user_input = msg.data
+            self._image_count = 0
             await self._status("🌱 생각하는 중...")
             await self._session.send(input=msg.data, end_of_turn=True)
         elif msg.type == "audio" and msg.data:
             audio_bytes = base64.b64decode(msg.data)
+            self._image_count = 0
             await self._session.send(
                 input=types.Blob(data=audio_bytes, mime_type="audio/pcm;rate=16000")
             )
@@ -150,42 +157,66 @@ class GeminiSession:
         """Helper to push a status chunk to the queue."""
         await self._response_queue.put(StoryChunk(type="status", data=msg))
 
+    async def _generate_image_async(self, prompt: str):
+        """Generate image in background and push to queue."""
+        await self._status("🎨 그림 그리는 중...")
+        try:
+            image_b64 = await self._image_service.generate(prompt)
+            if image_b64:
+                await self._response_queue.put(
+                    StoryChunk(
+                        type="image",
+                        data=image_b64,
+                        mime_type="image/jpeg",
+                        sequence=self._next_seq(),
+                    )
+                )
+                await self._status("🖼️ 그림 완성!")
+                print(f"[ImageGen] Generated image for: {prompt[:60]}")
+            else:
+                await self._status("⚠️ 그림 생성 실패")
+        except Exception as e:
+            print(f"[ImageGen] Error: {e}")
+            await self._status("⚠️ 그림 생성 실패")
+
     async def _read_loop(self):
         first_audio = True
+        audio_chunk_count = 0
+        # Trigger image generation after every N audio chunks (approx every ~8 seconds)
+        IMAGE_TRIGGER_EVERY = 80
         try:
             async for response in self._session.receive():
-                # Tool calls (image generation)
-                if response.tool_call:
-                    for fc in response.tool_call.function_calls:
-                        if fc.name == "generate_image":
-                            scene_desc = fc.args.get("scene_description", "")
-                            await self._status("🎨 그림 그리는 중...")
-                            image_b64 = await self._image_service.generate(scene_desc)
-                            if image_b64:
-                                await self._response_queue.put(
-                                    StoryChunk(
-                                        type="image",
-                                        data=image_b64,
-                                        mime_type="image/png",
-                                        sequence=self._next_seq(),
-                                    )
-                                )
-                                await self._status("🌱 이야기 계속 중...")
-                            else:
-                                await self._status("🌱 이야기 계속 중...")
-                            from google.genai import types
-
-                            await self._session.send(
-                                input=types.LiveClientToolResponse(
-                                    function_responses=[
-                                        types.FunctionResponse(
-                                            name="generate_image",
-                                            id=fc.id,
-                                            response={"result": "image_generated"},
-                                        )
-                                    ]
-                                )
-                            )
+                if response.data:
+                    if first_audio:
+                        await self._status("🌱 말하는 중...")
+                        first_audio = False
+                    audio_chunk_count += 1
+                    await self._response_queue.put(
+                        StoryChunk(
+                            type="audio",
+                            data=base64.b64encode(response.data).decode(),
+                            mime_type="audio/pcm;rate=24000",
+                            sequence=self._next_seq(),
+                        )
+                    )
+                    # Auto-generate image at regular intervals (max 3 per session)
+                    if (
+                        audio_chunk_count % IMAGE_TRIGGER_EVERY == 0
+                        and self._image_count < 3
+                    ):
+                        self._image_count += 1
+                        scene_num = self._image_count
+                        user_fear = self._last_user_input or "something scary"
+                        if scene_num == 1:
+                            prompt = f"A child who is afraid of {user_fear}, beginning of a comforting fairy tale"
+                        elif scene_num == 2:
+                            prompt = f"A magical helper arriving to comfort a child afraid of {user_fear}, fairy tale middle scene"
+                        else:
+                            prompt = f"A child feeling safe and happy, overcoming fear of {user_fear}, hopeful fairy tale ending"
+                        print(
+                            f"[ReadLoop] Auto image #{self._image_count} at chunk {audio_chunk_count}"
+                        )
+                        asyncio.create_task(self._generate_image_async(prompt))
 
                 if response.text:
                     await self._response_queue.put(
@@ -196,18 +227,25 @@ class GeminiSession:
                         )
                     )
 
-                if response.data:
-                    if first_audio:
-                        await self._status("🌱 말하는 중...")
-                        first_audio = False
-                    await self._response_queue.put(
-                        StoryChunk(
-                            type="audio",
-                            data=base64.b64encode(response.data).decode(),
-                            mime_type="audio/pcm;rate=24000",
-                            sequence=self._next_seq(),
+                # Also trigger on turn_complete
+                turn_complete = (
+                    hasattr(response, "server_content")
+                    and response.server_content is not None
+                    and getattr(response.server_content, "turn_complete", False)
+                )
+                if turn_complete:
+                    print(f"[ReadLoop] Turn complete at chunk {audio_chunk_count}")
+                    if audio_chunk_count > 10 and self._image_count < 3:
+                        self._image_count += 1
+                        prompt = (
+                            self._last_user_input or "a comforting fairy tale scene"
                         )
-                    )
+                        print(
+                            f"[ReadLoop] Turn complete — generating image #{self._image_count}"
+                        )
+                        asyncio.create_task(self._generate_image_async(prompt))
+                    first_audio = True
+                    audio_chunk_count = 0
 
         except asyncio.CancelledError:
             pass

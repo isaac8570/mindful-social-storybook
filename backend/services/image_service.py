@@ -1,5 +1,18 @@
 import os
+import base64
+import io
 import httpx
+
+try:
+    from PIL import Image as PILImage
+
+    _PIL_AVAILABLE = True
+except ImportError:
+    _PIL_AVAILABLE = False
+
+# Target max size for WebSocket transmission (bytes, before base64 encoding)
+_MAX_IMAGE_BYTES = 400_000  # ~400KB raw → ~533KB base64, well under 1MB WS limit
+_TARGET_SIZE = (768, 768)
 
 
 class ImageService:
@@ -12,7 +25,7 @@ class ImageService:
         self._api_key = os.environ.get("GEMINI_API_KEY", "")
 
     async def generate(self, scene_description: str) -> str:
-        """Returns a base64-encoded PNG, or empty string on failure."""
+        """Returns a base64-encoded JPEG, or empty string on failure."""
         if not self._api_key:
             print("[ImageService] No GEMINI_API_KEY — skipping image")
             return ""
@@ -21,6 +34,30 @@ class ImageService:
         except Exception as e:
             print(f"[ImageService] Image generation failed: {e}")
             return ""
+
+    def _compress_image(self, raw_b64: str) -> str:
+        """Resize and compress image to JPEG to reduce payload size."""
+        if not _PIL_AVAILABLE:
+            return raw_b64
+        try:
+            img_bytes = base64.b64decode(raw_b64)
+            img = PILImage.open(io.BytesIO(img_bytes)).convert("RGB")
+            img.thumbnail(_TARGET_SIZE, PILImage.LANCZOS)
+            buf = io.BytesIO()
+            quality = 85
+            img.save(buf, format="JPEG", quality=quality, optimize=True)
+            while buf.tell() > _MAX_IMAGE_BYTES and quality > 40:
+                quality -= 10
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=quality, optimize=True)
+            compressed = base64.b64encode(buf.getvalue()).decode()
+            orig_kb = len(img_bytes) // 1024
+            new_kb = buf.tell() // 1024
+            print(f"[ImageService] Compressed {orig_kb}KB → {new_kb}KB (q={quality})")
+            return compressed
+        except Exception as e:
+            print(f"[ImageService] Compression failed: {e}, using original")
+            return raw_b64
 
     async def _generate(self, scene_description: str) -> str:
         prompt = (
@@ -52,5 +89,6 @@ class ImageService:
             )
             for part in parts:
                 if "inlineData" in part:
-                    return part["inlineData"]["data"]  # base64 PNG
+                    raw_b64 = part["inlineData"]["data"]
+                    return self._compress_image(raw_b64)
             raise ValueError("No image in response")

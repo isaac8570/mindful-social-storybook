@@ -48,4 +48,10 @@ if __name__ == "__main__":
     import uvicorn
 
     port = int(os.environ.get("PORT", 8080))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=port,
+        reload=False,
+        ws_max_size=10 * 1024 * 1024,  # 10MB — images can be up to ~1.5MB base64
+    )
