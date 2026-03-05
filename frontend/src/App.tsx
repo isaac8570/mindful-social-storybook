@@ -122,7 +122,7 @@ export default function App() {
   }, [])
 
   // ── WebSocket ─────────────────────────────────────────────────────────────
-  const { status, connect, sendAudio, sendInterrupt } = useWebSocket({
+  const { status, connect, sendAudio, sendText, sendInterrupt } = useWebSocket({
     url: WS_URL,
     onChunk: handleChunk,
   })
@@ -235,6 +235,13 @@ export default function App() {
             onPressStart={handlePressStart}
             onPressEnd={handlePressEnd}
             onInterrupt={handleInterrupt}
+            onSendText={(text) => {
+              audioQueueRef.current.unlock()
+              audioQueueRef.current.clear()
+              sendInterrupt()
+              sendText(text)
+              setIsWaitingForSprout(true)
+            }}
           />
         </div>
       </div>

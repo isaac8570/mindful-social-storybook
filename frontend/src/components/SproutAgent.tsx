@@ -305,18 +305,54 @@ interface SproutAgentProps {
   volume: number
 }
 
-export default function SproutAgent({ volume }: SproutAgentProps) {
+// ─── CSS Fallback Character (no WebGL) ───────────────────────────────────────
+
+function SproutCSS({ volume }: { volume: number }) {
+  const scale = 1 + volume * 0.08
   return (
-    <CanvasErrorBoundary
-      fallback={
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          height: '100%', fontSize: 80
-        }}>
-          🌱
-        </div>
-      }
-    >
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      height: '100%', flexDirection: 'column', gap: 8,
+    }}>
+      <div style={{
+        fontSize: 100,
+        transform: `scale(${scale})`,
+        transition: 'transform 0.1s ease',
+        animation: 'sprout-sway 3s ease-in-out infinite',
+        display: 'inline-block',
+        filter: 'drop-shadow(0 8px 16px rgba(169,209,142,0.4))',
+      }}>
+        🌱
+      </div>
+      <style>{`
+        @keyframes sprout-sway {
+          0%, 100% { transform: scale(${scale}) rotate(-3deg); }
+          50% { transform: scale(${scale}) rotate(3deg); }
+        }
+      `}</style>
+    </div>
+  )
+}
+
+export default function SproutAgent({ volume }: SproutAgentProps) {
+  // Detect WebGL support before trying to render Canvas
+  const hasWebGL = (() => {
+    try {
+      const canvas = document.createElement('canvas')
+      return !!(
+        canvas.getContext('webgl') || canvas.getContext('experimental-webgl')
+      )
+    } catch {
+      return false
+    }
+  })()
+
+  if (!hasWebGL) {
+    return <SproutCSS volume={volume} />
+  }
+
+  return (
+    <CanvasErrorBoundary fallback={<SproutCSS volume={volume} />}>
       <Canvas
         camera={{ position: [0, 0.2, 2.8], fov: 35 }}
         style={{ background: 'transparent' }}

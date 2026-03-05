@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useLang } from '../App'
 
 interface AudioControlProps {
@@ -9,6 +9,7 @@ interface AudioControlProps {
   onPressStart: () => void
   onPressEnd: () => void
   onInterrupt: () => void
+  onSendText?: (text: string) => void
 }
 
 export default function AudioControl({
@@ -19,9 +20,13 @@ export default function AudioControl({
   onPressStart,
   onPressEnd,
   onInterrupt,
+  onSendText,
 }: AudioControlProps) {
   const [pressed, setPressed] = useState(false)
   const [holdTimer, setHoldTimer] = useState(0)
+  const [textInput, setTextInput] = useState('')
+  const [showTextInput, setShowTextInput] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
   const { t } = useLang()
 
   // Timer to show how long user is holding
@@ -135,6 +140,57 @@ export default function AudioControl({
         >
           {t.stopStory}
         </button>
+      )}
+
+      {/* Text input toggle */}
+      {onSendText && (
+        <div className="w-full mt-1">
+          {!showTextInput ? (
+            <button
+              onClick={() => { setShowTextInput(true); setTimeout(() => inputRef.current?.focus(), 50) }}
+              className="w-full text-xs text-sprout-brown/40 hover:text-sprout-brown/70 transition-colors py-1"
+            >
+              ✏️ 텍스트로 입력하기
+            </button>
+          ) : (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                const text = textInput.trim()
+                if (text && isConnected) {
+                  onSendText(text)
+                  setTextInput('')
+                  setShowTextInput(false)
+                }
+              }}
+              className="flex gap-2 items-center"
+            >
+              <input
+                ref={inputRef}
+                type="text"
+                value={textInput}
+                onChange={(e) => setTextInput(e.target.value)}
+                placeholder="무엇이 무섭거나 걱정되나요?"
+                disabled={!isConnected}
+                className="flex-1 text-sm px-3 py-2 rounded-full border border-sprout-warm bg-white text-sprout-brown placeholder-sprout-brown/40 focus:outline-none focus:border-sprout-green"
+              />
+              <button
+                type="submit"
+                disabled={!isConnected || !textInput.trim()}
+                className="px-4 py-2 bg-sprout-green text-white text-sm rounded-full disabled:opacity-40 hover:bg-sprout-softgreen transition-colors"
+              >
+                전송
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowTextInput(false)}
+                className="text-sprout-brown/40 hover:text-sprout-brown/70 text-sm px-2"
+              >
+                ✕
+              </button>
+            </form>
+          )}
+        </div>
       )}
     </div>
   )
