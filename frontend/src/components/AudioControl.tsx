@@ -71,11 +71,11 @@ export default function AudioControl({
   const placeholder = lang === 'ko' ? '무엇이 무섭거나 걱정되나요?' : "What scares or worries you?"
 
   return (
-    <div className="flex flex-col gap-2 py-3 px-4 safe-area-bottom">
+    <div className="flex flex-col gap-2 py-3 px-2 safe-area-bottom">
 
       {/* ── 텍스트 입력창 (항상 표시) ── */}
       {onSendText && (
-        <form onSubmit={handleTextSubmit} className="flex items-center gap-2">
+        <form onSubmit={handleTextSubmit} className="flex items-center gap-1.5">
           <input
             ref={inputRef}
             type="text"
@@ -84,7 +84,7 @@ export default function AudioControl({
             placeholder={placeholder}
             disabled={!isConnected || isRecording}
             className="
-              flex-1 text-sm px-4 py-2.5 rounded-full
+              flex-1 min-w-0 text-sm px-3 py-2.5 rounded-full
               border-2 border-sprout-warm bg-white
               text-sprout-brown placeholder-sprout-brown/35
               focus:outline-none focus:border-sprout-green
@@ -95,7 +95,7 @@ export default function AudioControl({
             type="submit"
             disabled={!isConnected || !textInput.trim() || isRecording}
             className="
-              w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0
+              w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0
               bg-sprout-green text-white shadow
               disabled:opacity-40 hover:bg-sprout-softgreen
               active:scale-95 transition-all
