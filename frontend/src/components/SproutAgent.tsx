@@ -1,368 +1,288 @@
-import { useRef, useMemo, Component, ReactNode } from 'react'
-import { Canvas, useFrame } from '@react-three/fiber'
-import * as THREE from 'three'
-
-// Error boundary so 3D crash doesn't kill the whole app
-class CanvasErrorBoundary extends Component<
-  { children: ReactNode; fallback: ReactNode },
-  { hasError: boolean }
-> {
-  constructor(props: { children: ReactNode; fallback: ReactNode }) {
-    super(props)
-    this.state = { hasError: false }
-  }
-  static getDerivedStateFromError() { return { hasError: true } }
-  render() {
-    return this.state.hasError ? this.props.fallback : this.props.children
-  }
-}
-
-// ─── Design by Gemini ────────────────────────────────────────────────────────
-// Body: Soft bean shape, #A9D18E (main), #E6F5DF (highlight)
-// Eyes: Large ovals, #333333, white sparkles
-// Mouth: Simple upturned curve
-// Blush: #FFD4C2
-// Leaves: 2 rounded leaves, #9CCC65
-// Animations: breathing, blink, sway, leaf wave
-
-// ─── Modern Soft Shader ──────────────────────────────────────────────────────
-
-const softVertexShader = `
-  varying vec2 vUv;
-  varying vec3 vNormal;
-  varying vec3 vPosition;
-  uniform float uTime;
-  uniform float uBreath;
-
-  void main() {
-    vUv = uv;
-    vNormal = normalize(normalMatrix * normal);
-    vPosition = position;
-
-    vec3 pos = position;
-    
-    // Gentle breathing - subtle rise and fall
-    float breath = sin(uTime * 1.2) * 0.02 + uBreath * 0.08;
-    pos.y *= (1.0 + breath);
-    pos.x *= (1.0 - breath * 0.3);
-    pos.z *= (1.0 - breath * 0.3);
-
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-  }
-`
-
-const softFragmentShader = `
-  varying vec2 vUv;
-  varying vec3 vNormal;
-  varying vec3 vPosition;
-  uniform float uTime;
-
-  void main() {
-    // Gemini's colors: #A9D18E (main), #E6F5DF (highlight)
-    vec3 mainColor = vec3(0.663, 0.820, 0.557);    // #A9D18E
-    vec3 highlightColor = vec3(0.902, 0.961, 0.875); // #E6F5DF
-    vec3 shadowColor = vec3(0.545, 0.718, 0.443);  // darker shade
-
-    // Soft gradient from bottom to top
-    float gradient = smoothstep(-1.0, 1.2, vPosition.y);
-    vec3 color = mix(mainColor, highlightColor, gradient * 0.4);
-
-    // Soft rim lighting (modern 3D look)
-    vec3 viewDir = vec3(0.0, 0.0, 1.0);
-    float rim = 1.0 - max(dot(vNormal, viewDir), 0.0);
-    rim = pow(rim, 3.0);
-    color = mix(color, highlightColor, rim * 0.5);
-
-    // Subtle top light
-    float topLight = max(dot(vNormal, normalize(vec3(0.0, 1.0, 0.5))), 0.0);
-    color = mix(color, highlightColor, topLight * 0.3);
-
-    // Soft shadow at bottom
-    float bottomShadow = smoothstep(0.0, -0.8, vPosition.y);
-    color = mix(color, shadowColor, bottomShadow * 0.3);
-
-    // Very subtle ambient occlusion feel
-    float ao = smoothstep(-0.5, 0.5, vPosition.y) * 0.15 + 0.85;
-    color *= ao;
-
-    gl_FragColor = vec4(color, 1.0);
-  }
-`
-
-// ─── Modern Rounded Leaf ─────────────────────────────────────────────────────
-
-function ModernLeaf({ 
-  position, 
-  rotation, 
-  scale = 1,
-  delay = 0 
-}: { 
-  position: [number, number, number]
-  rotation: [number, number, number]
-  scale?: number
-  delay?: number
-}) {
-  const meshRef = useRef<THREE.Group>(null)
-  
-  useFrame(({ clock }) => {
-    if (meshRef.current) {
-      const t = clock.getElapsedTime() + delay
-      // Gentle sway like a plant in breeze
-      meshRef.current.rotation.z = rotation[2] + Math.sin(t * 0.8) * 0.1
-      meshRef.current.rotation.x = rotation[0] + Math.cos(t * 0.6) * 0.05
-    }
-  })
-
-  return (
-    <group ref={meshRef} position={position} rotation={rotation} scale={scale}>
-      {/* Leaf shape - rounded ellipsoid */}
-      <mesh>
-        <sphereGeometry args={[0.18, 16, 12]} />
-        <meshStandardMaterial 
-          color="#9CCC65"  // Gemini's leaf color
-          roughness={0.7}
-          metalness={0.0}
-        />
-      </mesh>
-      {/* Leaf stem */}
-      <mesh position={[0, -0.15, 0]} rotation={[0, 0, 0]}>
-        <cylinderGeometry args={[0.02, 0.03, 0.12, 8]} />
-        <meshStandardMaterial color="#7CB342" roughness={0.8} />
-      </mesh>
-    </group>
-  )
-}
-
-// ─── Modern Eye with Blink ───────────────────────────────────────────────────
-
-function ModernEye({ position, blinkOffset = 0 }: { position: [number, number, number]; blinkOffset?: number }) {
-  const groupRef = useRef<THREE.Group>(null)
-  const blinkRef = useRef(1) // 1 = open, 0 = closed
-  
-  useFrame(({ clock }) => {
-    const t = clock.getElapsedTime() + blinkOffset
-    
-    // Slow, contented blink every ~4 seconds
-    const blinkCycle = t % 4
-    if (blinkCycle < 0.15) {
-      blinkRef.current = Math.cos(blinkCycle / 0.15 * Math.PI) * 0.5 + 0.5
-    } else {
-      blinkRef.current = 1
-    }
-    
-    if (groupRef.current) {
-      groupRef.current.scale.y = 0.3 + blinkRef.current * 0.7
-    }
-  })
-
-  return (
-    <group ref={groupRef} position={position}>
-      {/* Eye - large oval */}
-      <mesh scale={[1, 1.3, 0.8]}>
-        <sphereGeometry args={[0.09, 16, 16]} />
-        <meshBasicMaterial color="#333333" />  {/* Gemini's eye color */}
-      </mesh>
-      {/* Main sparkle */}
-      <mesh position={[0.025, 0.04, 0.06]}>
-        <sphereGeometry args={[0.025, 8, 8]} />
-        <meshBasicMaterial color="#ffffff" />
-      </mesh>
-      {/* Small sparkle */}
-      <mesh position={[-0.015, -0.01, 0.055]}>
-        <sphereGeometry args={[0.012, 8, 8]} />
-        <meshBasicMaterial color="#ffffff" transparent opacity={0.8} />
-      </mesh>
-    </group>
-  )
-}
-
-// ─── Soft Blush ──────────────────────────────────────────────────────────────
-
-function Blush({ position }: { position: [number, number, number] }) {
-  return (
-    <mesh position={position} rotation={[0, 0, 0]}>
-      <circleGeometry args={[0.08, 16]} />
-      <meshBasicMaterial 
-        color="#FFD4C2"  // Gemini's blush color
-        transparent 
-        opacity={0.4} 
-      />
-    </mesh>
-  )
-}
-
-// ─── Simple Smile ────────────────────────────────────────────────────────────
-
-function SimpleSmile({ volume }: { volume: number }) {
-  const meshRef = useRef<THREE.Mesh>(null)
-  
-  useFrame(() => {
-    if (meshRef.current) {
-      // Smile widens slightly when speaking
-      const scale = 1 + volume * 0.2
-      meshRef.current.scale.set(scale, 1, 1)
-    }
-  })
-
-  return (
-    <mesh ref={meshRef} position={[0, -0.12, 0.72]} rotation={[0.1, 0, Math.PI]}>
-      <torusGeometry args={[0.08, 0.018, 8, 16, Math.PI * 0.8]} />
-      <meshBasicMaterial color="#5D4037" />
-    </mesh>
-  )
-}
-
-// ─── Sprout Body (Bean Shape) ────────────────────────────────────────────────
-
-function SproutBody({ volume }: { volume: number }) {
-  const groupRef = useRef<THREE.Group>(null)
-  
-  const uniforms = useMemo(
-    () => ({
-      uTime: { value: 0 },
-      uBreath: { value: 0 },
-    }),
-    []
-  )
-
-  useFrame(({ clock }) => {
-    const t = clock.getElapsedTime()
-    uniforms.uTime.value = t
-    
-    // Smooth breath
-    uniforms.uBreath.value = THREE.MathUtils.lerp(
-      uniforms.uBreath.value,
-      volume,
-      0.1
-    )
-    
-    // Gentle sway (like a plant in light breeze)
-    if (groupRef.current) {
-      groupRef.current.rotation.z = Math.sin(t * 0.5) * 0.03
-      groupRef.current.position.y = Math.sin(t * 0.8) * 0.02
-    }
-  })
-
-  return (
-    <group ref={groupRef}>
-      {/* Main body - soft bean shape (bottom-heavy) */}
-      <mesh scale={[0.85, 1, 0.8]}>
-        <sphereGeometry args={[0.8, 64, 64]} />
-        <shaderMaterial
-          vertexShader={softVertexShader}
-          fragmentShader={softFragmentShader}
-          uniforms={uniforms}
-        />
-      </mesh>
-
-      {/* Eyes - large, widely spaced */}
-      <ModernEye position={[-0.22, 0.1, 0.62]} blinkOffset={0} />
-      <ModernEye position={[0.22, 0.1, 0.62]} blinkOffset={0.5} />
-
-      {/* Blush - soft peach */}
-      <Blush position={[-0.35, -0.05, 0.65]} />
-      <Blush position={[0.35, -0.05, 0.65]} />
-
-      {/* Simple smile */}
-      <SimpleSmile volume={volume} />
-
-      {/* Two rounded leaves - slightly angled */}
-      <ModernLeaf 
-        position={[-0.12, 0.85, 0]} 
-        rotation={[0.2, 0, -0.3]} 
-        scale={1.1} 
-        delay={0} 
-      />
-      <ModernLeaf 
-        position={[0.12, 0.85, 0]} 
-        rotation={[0.2, 0, 0.3]} 
-        scale={1.1} 
-        delay={0.8} 
-      />
-    </group>
-  )
-}
-
-// ─── Scene ───────────────────────────────────────────────────────────────────
-
-function Scene({ volume }: { volume: number }) {
-  return (
-    <>
-      {/* Soft, warm lighting */}
-      <ambientLight intensity={0.7} color="#fffaf5" />
-      <directionalLight position={[2, 4, 5]} intensity={0.5} color="#fff8f0" />
-      <directionalLight position={[-2, 2, 3]} intensity={0.3} color="#f0fff0" />
-      {/* Subtle rim light */}
-      <pointLight position={[0, 1, -2]} intensity={0.2} color="#e8f5e9" />
-      <SproutBody volume={volume} />
-    </>
-  )
-}
-
-// ─── Export ──────────────────────────────────────────────────────────────────
+import { useRef, useEffect, useState, useCallback } from 'react'
 
 interface SproutAgentProps {
   volume: number
 }
 
-// ─── CSS Fallback Character (no WebGL) ───────────────────────────────────────
-
-function SproutCSS({ volume }: { volume: number }) {
-  const scale = 1 + volume * 0.08
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      height: '100%', flexDirection: 'column', gap: 8,
-    }}>
-      <div style={{
-        fontSize: 100,
-        transform: `scale(${scale})`,
-        transition: 'transform 0.1s ease',
-        animation: 'sprout-sway 3s ease-in-out infinite',
-        display: 'inline-block',
-        filter: 'drop-shadow(0 8px 16px rgba(169,209,142,0.4))',
-      }}>
-        🌱
-      </div>
-      <style>{`
-        @keyframes sprout-sway {
-          0%, 100% { transform: scale(${scale}) rotate(-3deg); }
-          50% { transform: scale(${scale}) rotate(3deg); }
-        }
-      `}</style>
-    </div>
-  )
-}
+// ─── SVG Sprout Character ─────────────────────────────────────────────────────
+// - 마우스/터치 따라 눈동자 이동
+// - 말할 때 입 벌림
+// - 숨쉬기 / 깜빡임 / 흔들림 애니메이션
 
 export default function SproutAgent({ volume }: SproutAgentProps) {
-  // Detect WebGL support before trying to render Canvas
-  const hasWebGL = (() => {
-    try {
-      const canvas = document.createElement('canvas')
-      return !!(
-        canvas.getContext('webgl') || canvas.getContext('experimental-webgl')
-      )
-    } catch {
-      return false
-    }
-  })()
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [pupilOffset, setPupilOffset] = useState({ x: 0, y: 0 })
+  const [blink, setBlink] = useState(false)
+  const [sway, setSway] = useState(0)
+  const [breathe, setBreathe] = useState(0)
 
-  if (!hasWebGL) {
-    return <SproutCSS volume={volume} />
-  }
+  // ── 마우스/터치 눈동자 추적 ──────────────────────────────────────────────────
+  const handlePointerMove = useCallback((e: PointerEvent | TouchEvent) => {
+    const container = containerRef.current
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+    const cx = rect.left + rect.width / 2
+    const cy = rect.top + rect.height / 2
+
+    let clientX: number, clientY: number
+    if ('touches' in e) {
+      clientX = e.touches[0].clientX
+      clientY = e.touches[0].clientY
+    } else {
+      clientX = (e as PointerEvent).clientX
+      clientY = (e as PointerEvent).clientY
+    }
+
+    const dx = clientX - cx
+    const dy = clientY - cy
+    const dist = Math.sqrt(dx * dx + dy * dy)
+    const maxDist = Math.min(rect.width, rect.height) * 0.6
+    const factor = Math.min(dist, maxDist) / maxDist
+    const angle = Math.atan2(dy, dx)
+    const MAX_PUPIL = 4.5
+
+    setPupilOffset({
+      x: Math.cos(angle) * factor * MAX_PUPIL,
+      y: Math.sin(angle) * factor * MAX_PUPIL,
+    })
+  }, [])
+
+  useEffect(() => {
+    window.addEventListener('pointermove', handlePointerMove as EventListener)
+    window.addEventListener('touchmove', handlePointerMove as EventListener, { passive: true })
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove as EventListener)
+      window.removeEventListener('touchmove', handlePointerMove as EventListener)
+    }
+  }, [handlePointerMove])
+
+  // ── 깜빡임 ──────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const scheduleBlink = () => {
+      const delay = 2500 + Math.random() * 3000
+      return setTimeout(() => {
+        setBlink(true)
+        setTimeout(() => setBlink(false), 130)
+        blinkTimer = scheduleBlink()
+      }, delay)
+    }
+    let blinkTimer = scheduleBlink()
+    return () => clearTimeout(blinkTimer)
+  }, [])
+
+  // ── 흔들림 + 숨쉬기 ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    let frame: number
+    let start = performance.now()
+    const animate = (now: number) => {
+      const t = (now - start) / 1000
+      setSway(Math.sin(t * 0.7) * 3)
+      setBreathe(Math.sin(t * 1.1) * 0.018)
+      frame = requestAnimationFrame(animate)
+    }
+    frame = requestAnimationFrame(animate)
+    return () => cancelAnimationFrame(frame)
+  }, [])
+
+  // ── 말할 때 입 크기 ──────────────────────────────────────────────────────────
+  const mouthOpen = Math.min(volume * 1.8, 1)
+  const eyeScaleY = blink ? 0.08 : 1
+
+  // ── 몸통 숨쉬기 스케일 ───────────────────────────────────────────────────────
+  const bodyScaleY = 1 + breathe + volume * 0.04
+  const bodyScaleX = 1 - breathe * 0.4 - volume * 0.02
 
   return (
-    <CanvasErrorBoundary fallback={<SproutCSS volume={volume} />}>
-      <Canvas
-        camera={{ position: [0, 0.2, 2.8], fov: 35 }}
-        style={{ background: 'transparent' }}
-        gl={{ antialias: true, alpha: true }}
-        onCreated={({ gl }) => {
-          gl.setClearColor(0x000000, 0)
+    <div
+      ref={containerRef}
+      style={{
+        width: '100%',
+        height: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'none',
+      }}
+    >
+      <svg
+        viewBox="0 0 200 240"
+        width="100%"
+        height="100%"
+        style={{
+          maxWidth: 220,
+          maxHeight: 280,
+          transform: `rotate(${sway}deg)`,
+          transformOrigin: 'bottom center',
+          transition: 'transform 0.05s linear',
+          overflow: 'visible',
+          filter: 'drop-shadow(0 12px 24px rgba(120,180,80,0.25))',
         }}
       >
-        <Scene volume={volume} />
-      </Canvas>
-    </CanvasErrorBoundary>
+        {/* ── 그림자 ── */}
+        <ellipse cx="100" cy="232" rx="42" ry="8"
+          fill="rgba(0,0,0,0.08)" />
+
+        {/* ── 몸통 (bean shape) ── */}
+        <g transform={`translate(100,118) scale(${bodyScaleX},${bodyScaleY}) translate(-100,-118)`}>
+          {/* 몸통 그라데이션 */}
+          <defs>
+            <radialGradient id="bodyGrad" cx="40%" cy="35%" r="65%">
+              <stop offset="0%" stopColor="#d4f0b0" />
+              <stop offset="55%" stopColor="#a8d878" />
+              <stop offset="100%" stopColor="#7ab84a" />
+            </radialGradient>
+            <radialGradient id="cheekGrad" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#ffb3a0" stopOpacity="0.9" />
+              <stop offset="100%" stopColor="#ff8870" stopOpacity="0" />
+            </radialGradient>
+            <radialGradient id="eyeGrad" cx="35%" cy="30%" r="60%">
+              <stop offset="0%" stopColor="#5a3a1a" />
+              <stop offset="100%" stopColor="#2a1a08" />
+            </radialGradient>
+          </defs>
+
+          {/* 몸통 */}
+          <ellipse cx="100" cy="130" rx="62" ry="72"
+            fill="url(#bodyGrad)"
+            stroke="#8fc855" strokeWidth="1.5"
+          />
+          {/* 배 하이라이트 */}
+          <ellipse cx="88" cy="108" rx="22" ry="28"
+            fill="white" opacity="0.18" />
+        </g>
+
+        {/* ── 잎사귀 왼쪽 ── */}
+        <g style={{ transformOrigin: '78px 62px', animation: 'leafWave1 2.8s ease-in-out infinite' }}>
+          <ellipse cx="68" cy="52" rx="22" ry="13"
+            fill="#6abf3a" stroke="#4e9a28" strokeWidth="1"
+            transform="rotate(-35, 68, 52)" />
+          <line x1="78" y1="62" x2="58" y2="44"
+            stroke="#4e9a28" strokeWidth="1.2" strokeLinecap="round" />
+        </g>
+
+        {/* ── 잎사귀 오른쪽 ── */}
+        <g style={{ transformOrigin: '122px 62px', animation: 'leafWave2 3.2s ease-in-out infinite' }}>
+          <ellipse cx="132" cy="52" rx="22" ry="13"
+            fill="#7acc44" stroke="#5aaa30" strokeWidth="1"
+            transform="rotate(35, 132, 52)" />
+          <line x1="122" y1="62" x2="142" y2="44"
+            stroke="#5aaa30" strokeWidth="1.2" strokeLinecap="round" />
+        </g>
+
+        {/* ── 줄기 ── */}
+        <path d="M100 68 Q98 80 100 90"
+          stroke="#5aaa30" strokeWidth="3" fill="none" strokeLinecap="round" />
+
+        {/* ── 왼쪽 눈 ── */}
+        <g transform="translate(76, 112)">
+          {/* 눈 흰자 */}
+          <ellipse cx="0" cy="0" rx="13" ry="14"
+            fill="white" stroke="#c8e89a" strokeWidth="1" />
+          {/* 눈동자 */}
+          <g transform={`translate(${pupilOffset.x}, ${pupilOffset.y}) scale(1, ${eyeScaleY})`}
+            style={{ transformOrigin: '0 0' }}>
+            <ellipse cx="0" cy="0" rx="7.5" ry="8"
+              fill="url(#eyeGrad)" />
+            {/* 하이라이트 */}
+            <ellipse cx="-2.5" cy="-2.5" rx="2.5" ry="2.5"
+              fill="white" opacity="0.9" />
+            <ellipse cx="2" cy="2" rx="1.2" ry="1.2"
+              fill="white" opacity="0.5" />
+          </g>
+          {/* 눈꺼풀 (깜빡임) */}
+          {blink && (
+            <ellipse cx="0" cy="0" rx="13" ry="14"
+              fill="#a8d878" />
+          )}
+        </g>
+
+        {/* ── 오른쪽 눈 ── */}
+        <g transform="translate(124, 112)">
+          <ellipse cx="0" cy="0" rx="13" ry="14"
+            fill="white" stroke="#c8e89a" strokeWidth="1" />
+          <g transform={`translate(${pupilOffset.x}, ${pupilOffset.y}) scale(1, ${eyeScaleY})`}
+            style={{ transformOrigin: '0 0' }}>
+            <ellipse cx="0" cy="0" rx="7.5" ry="8"
+              fill="url(#eyeGrad)" />
+            <ellipse cx="-2.5" cy="-2.5" rx="2.5" ry="2.5"
+              fill="white" opacity="0.9" />
+            <ellipse cx="2" cy="2" rx="1.2" ry="1.2"
+              fill="white" opacity="0.5" />
+          </g>
+          {blink && (
+            <ellipse cx="0" cy="0" rx="13" ry="14"
+              fill="#a8d878" />
+          )}
+        </g>
+
+        {/* ── 볼터치 ── */}
+        <ellipse cx="60" cy="128" rx="14" ry="9"
+          fill="url(#cheekGrad)" opacity="0.7" />
+        <ellipse cx="140" cy="128" rx="14" ry="9"
+          fill="url(#cheekGrad)" opacity="0.7" />
+
+        {/* ── 입 ── */}
+        {mouthOpen < 0.15 ? (
+          /* 닫힌 입 — 귀여운 미소 */
+          <path
+            d={`M 86 142 Q 100 ${150 + mouthOpen * 6} 114 142`}
+            stroke="#5a3a1a" strokeWidth="2.5" fill="none"
+            strokeLinecap="round"
+          />
+        ) : (
+          /* 열린 입 — 말하는 중 */
+          <g>
+            <ellipse cx="100" cy="146"
+              rx={10 + mouthOpen * 6}
+              ry={3 + mouthOpen * 9}
+              fill="#3a1a08"
+            />
+            {/* 혀 */}
+            <ellipse cx="100" cy={148 + mouthOpen * 4}
+              rx={6 + mouthOpen * 3}
+              ry={2 + mouthOpen * 3}
+              fill="#ff7a7a" opacity="0.8"
+            />
+          </g>
+        )}
+
+        {/* ── 팔 (말할 때 들썩) ── */}
+        <g style={{ transformOrigin: '44px 148px', animation: volume > 0.1 ? 'armWave 0.4s ease-in-out infinite alternate' : 'none' }}>
+          <path d="M 44 148 Q 22 158 18 172"
+            stroke="#8fc855" strokeWidth="10" fill="none"
+            strokeLinecap="round" />
+          {/* 손 */}
+          <circle cx="16" cy="176" r="9" fill="#a8d878" stroke="#7ab84a" strokeWidth="1" />
+        </g>
+        <g style={{ transformOrigin: '156px 148px', animation: volume > 0.1 ? 'armWave 0.4s ease-in-out infinite alternate-reverse' : 'none' }}>
+          <path d="M 156 148 Q 178 158 182 172"
+            stroke="#8fc855" strokeWidth="10" fill="none"
+            strokeLinecap="round" />
+          <circle cx="184" cy="176" r="9" fill="#a8d878" stroke="#7ab84a" strokeWidth="1" />
+        </g>
+
+        {/* ── 발 ── */}
+        <ellipse cx="82" cy="200" rx="16" ry="9"
+          fill="#7ab84a" stroke="#5a9a30" strokeWidth="1" />
+        <ellipse cx="118" cy="200" rx="16" ry="9"
+          fill="#7ab84a" stroke="#5a9a30" strokeWidth="1" />
+
+        {/* ── 애니메이션 keyframes ── */}
+        <style>{`
+          @keyframes leafWave1 {
+            0%, 100% { transform: rotate(-8deg); }
+            50% { transform: rotate(4deg); }
+          }
+          @keyframes leafWave2 {
+            0%, 100% { transform: rotate(8deg); }
+            50% { transform: rotate(-4deg); }
+          }
+          @keyframes armWave {
+            0% { transform: rotate(-8deg); }
+            100% { transform: rotate(8deg); }
+          }
+        `}</style>
+      </svg>
+    </div>
   )
 }
